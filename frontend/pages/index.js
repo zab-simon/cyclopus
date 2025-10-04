@@ -1,21 +1,33 @@
 import { useState } from "react";
-import axios from "axios";
 
 export default function Home() {
-  const [msg, setMsg] = useState("");
-  const [reply, setReply] = useState("");
+  const [input, setInput] = useState("");
+  const [response, setResponse] = useState("");
 
-  const sendMsg = async () => {
-    const r = await axios.post("/api/chat", { message: msg });
-    setReply(r.data.reply);
+  const sendRequest = async () => {
+    const res = await fetch("/api/query", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: input }),
+    });
+    const data = await res.json();
+    setResponse(data.output || "No response");
   };
 
   return (
-    <main style={{ padding: 20 }}>
-      <h2>🧠 Cyclopus AI Analyst</h2>
-      <textarea rows="3" value={msg} onChange={e => setMsg(e.target.value)} />
-      <button onClick={sendMsg}>Send</button>
-      <p><b>Response:</b> {reply}</p>
-    </main>
+    <div style={{ padding: "40px", fontFamily: "Inter, sans-serif" }}>
+      <h1>⚡ Cyclopus AI Analyst</h1>
+      <textarea
+        rows="4"
+        cols="50"
+        placeholder="Enter your query..."
+        value={input}
+        onChange={(e) => setInput(e.target.value)}
+      />
+      <br />
+      <button onClick={sendRequest}>Send</button>
+      <h3>Response:</h3>
+      <pre>{response}</pre>
+    </div>
   );
 }

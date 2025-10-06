@@ -1,4 +1,7 @@
-export function log(message, data = null) {
-  const stamp = new Date().toISOString();
-  console.log(`[${stamp}] ${message}`, data || "");
+export function logInfo(msg) {
+  console.log(`ℹ️ ${msg}`);
+}
+
+export function logError(msg) {
+  console.error(`❌ ${msg}`);
 }

@@ -1,57 +1,45 @@
 import OpenAI from "openai";
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-// --- CONFIG ---
-const MAX_MSG_LEN = 3500; // защита от перегруза
-const RETRY_COUNT = 2; // повтор при неудаче
+const TELEGRAM_URL = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`;
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).json({ error: "Only POST allowed" });
+  if (req.method !== "POST") return res.status(405).send("Only POST allowed");
 
-  const msg = req.body?.message?.text?.trim();
-  const chatId = req.body?.message?.chat?.id;
+  const msg = req.body?.message;
+  if (!msg || !msg.text || !msg.chat?.id)
+    return res.status(400).send("Invalid message");
 
-  if (!msg || !chatId) return res.status(400).json({ error: "Empty message" });
-  if (msg.length > MAX_MSG_LEN) {
-    await sendToTG(chatId, "⚠️ Сообщение слишком длинное. Сократите его, пожалуйста.");
-    return res.status(400).json({ error: "Message too long" });
-  }
+  const chatId = msg.chat.id;
+  const text = msg.text.trim();
 
   try {
-    // --- CALL OPENAI ---
-    const response = await client.chat.completions.create({
+    const completion = await client.responses.create({
       model: "gpt-4o-mini",
-      messages: [{ role: "user", content: msg }],
-      temperature: 0.6,
-      max_tokens: 800,
+      input: text,
     });
 
-    const answer = response?.choices?.[0]?.message?.content?.trim() || "⚠️ Нет ответа от модели.";
+    const answer = completion.output_text || "⚙️ No response";
 
-    // --- SEND BACK TO TELEGRAM ---
-    await sendToTG(chatId, answer);
-    res.status(200).json({ ok: true });
-  } catch (err) {
-    console.error("TG handler error:", err);
-    await sendToTG(chatId, "❌ Ошибка на сервере. Попробуйте чуть позже.");
-    res.status(500).json({ error: err.message });
+    await sendMessage(chatId, answer);
+    res.status(200).send("✅ Sent");
+  } catch (e) {
+    console.error("❌ Error:", e.message);
+    await sendMessage(chatId, "⚠️ Internal error, try later.");
+    res.status(500).json({ error: e.message });
   }
 }
 
-// helper: send message with retry
-async function sendToTG(chatId, text) {
-  const url = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`;
-  const body = JSON.stringify({ chat_id: chatId, text });
-
-  for (let i = 0; i <= RETRY_COUNT; i++) {
-    const res = await fetch(url, {
+async function sendMessage(chatId, text, retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    const r = await fetch(TELEGRAM_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body,
+      body: JSON.stringify({ chat_id: chatId, text }),
     });
-    if (res.ok) return true;
-    await new Promise(r => setTimeout(r, 500 * (i + 1)));
+
+    if (r.ok) return true;
+    if (r.status === 429) await new Promise(r => setTimeout(r, 1500 * (i + 1)));
   }
-  console.error("TG sendMessage failed after retries.");
+  throw new Error("TG sendMessage failed after retries.");
 }

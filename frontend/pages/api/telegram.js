@@ -1,60 +1,50 @@
 import OpenAI from "openai";
+import { logInfo, logError } from "../../utils/logger.js";
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).send("Only POST allowed");
+  if (req.method !== "POST") {
+    logError("Wrong method", req.method);
+    return res.status(405).send("Only POST allowed");
+  }
+
+  const body = req.body;
+  const message = body?.message?.text;
+  const chatId = body?.message?.chat?.id;
+
+  if (!message || !chatId) {
+    logError("Empty message or chatId", body);
+    return res.status(400).send("No message");
+  }
+
+  logInfo("TG IN", { chatId, message });
 
   try {
-    const body = req.body;
-    const message = body?.message?.text;
-    const chatId = body?.message?.chat?.id;
-
-    console.log("TG IN:", message);
-
-    if (!message || !chatId)
-      return res.status(400).send("No message or chat ID");
-
-    // Обработка /start и базовых команд
-    if (message === "/start") {
-      await sendTelegram(chatId, "👋 Привет! Я Cyclopus AI Analyst. Напиши вопрос.");
-      return res.status(200).send("OK");
-    }
-
-    // Основной OpenAI запрос
     const completion = await client.responses.create({
       model: "gpt-4o-mini",
       input: message,
     });
 
-    const answer = completion.output_text || "⚠️ No response";
+    const answer = completion.output_text?.trim() || "🤖 No response";
+    logInfo("GPT OUT", answer);
 
-    await sendTelegram(chatId, answer);
-    res.status(200).send("OK");
-  } catch (e) {
-    console.error("TG handler error:", e.message);
-    await safeTelegramFallback(e.message);
-    res.status(500).json({ error: e.message });
-  }
-}
-
-// 🔧 безопасная отправка сообщения в Telegram
-async function sendTelegram(chatId, text) {
-  try {
-    await fetch(
+    const tgRes = await fetch(
       `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chat_id: chatId, text }),
+        body: JSON.stringify({ chat_id: chatId, text: answer }),
       }
     );
-  } catch (err) {
-    console.error("TG sendMessage failed:", err.message);
-  }
-}
 
-// 🛡 fallback — логирует в Supabase или консоль
-async function safeTelegramFallback(msg) {
-  console.error("⚠️ OpenAI error fallback:", msg);
+    const result = await tgRes.json();
+    if (!result.ok) throw new Error(JSON.stringify(result));
+
+    logInfo("TG SENT", result);
+    res.status(200).send("OK");
+  } catch (err) {
+    logError("Handler Error", err.message || err);
+    res.status(500).json({ error: err.message });
+  }
 }

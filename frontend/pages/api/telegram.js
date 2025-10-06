@@ -1,45 +1,61 @@
 import OpenAI from "openai";
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const TELEGRAM_URL = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`;
+
+const sendMessage = async (chatId, text) => {
+  const url = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`;
+  const payload = { chat_id: chatId, text };
+
+  // надёжная отправка с 3 попытками и экспоненциальной задержкой
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (res.ok) return;
+      const errText = await res.text();
+      console.warn(`TG send fail [${attempt}]: ${errText}`);
+
+      // если rate limit — подождать больше
+      if (res.status === 429) {
+        await new Promise((r) => setTimeout(r, 1500 * attempt));
+      } else {
+        await new Promise((r) => setTimeout(r, 500 * attempt));
+      }
+    } catch (err) {
+      console.error(`TG send exception [${attempt}]:`, err.message);
+      await new Promise((r) => setTimeout(r, 1000 * attempt));
+    }
+  }
+};
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).send("Only POST allowed");
+  if (req.method !== "POST")
+    return res.status(405).json({ error: "Only POST allowed" });
 
-  const msg = req.body?.message;
-  if (!msg || !msg.text || !msg.chat?.id)
-    return res.status(400).send("Invalid message");
-
-  const chatId = msg.chat.id;
-  const text = msg.text.trim();
+  const msg = req.body?.message?.text;
+  const chatId = req.body?.message?.chat?.id;
+  if (!msg || !chatId)
+    return res.status(400).json({ error: "Invalid Telegram payload" });
 
   try {
+    console.log("TG IN:", msg);
+
     const completion = await client.responses.create({
       model: "gpt-4o-mini",
-      input: text,
+      input: msg,
     });
 
-    const answer = completion.output_text || "⚙️ No response";
-
+    const answer = completion.output_text?.trim() || "⚠️ No response.";
     await sendMessage(chatId, answer);
-    res.status(200).send("✅ Sent");
+
+    res.status(200).json({ ok: true });
   } catch (e) {
-    console.error("❌ Error:", e.message);
-    await sendMessage(chatId, "⚠️ Internal error, try later.");
+    console.error("TG handler error:", e);
+    await sendMessage(chatId, "⚠️ Internal server error. Try later.");
     res.status(500).json({ error: e.message });
   }
-}
-
-async function sendMessage(chatId, text, retries = 3) {
-  for (let i = 0; i < retries; i++) {
-    const r = await fetch(TELEGRAM_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, text }),
-    });
-
-    if (r.ok) return true;
-    if (r.status === 429) await new Promise(r => setTimeout(r, 1500 * (i + 1)));
-  }
-  throw new Error("TG sendMessage failed after retries.");
 }
